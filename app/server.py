@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, cast
 
@@ -25,7 +26,7 @@ HOOK_PATH = f"/hooks/update-{WEBHOOK_TOKEN}"
 COMPOSE_FILE = "/compose/docker-compose.yml"
 
 
-def run_update() -> str:
+def run_update() -> None:
     services: list[str] = COMPOSE_SERVICES.split() if COMPOSE_SERVICES.strip() else []
     base: list[str] = ["docker", "compose", "-f", COMPOSE_FILE, "-p", COMPOSE_PROJECT_NAME]
     env: dict[str, str] = {**os.environ, "COMPOSE_PROJECT_NAME": COMPOSE_PROJECT_NAME}
@@ -33,19 +34,17 @@ def run_update() -> str:
     pull_cmd = base + ["pull"] + services
     up_cmd = base + ["up", "-d", "--no-deps", "--force-recreate"] + services
 
-    output_parts: list[str] = []
     for cmd in (pull_cmd, up_cmd):
         log.info("Running: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         combined = (result.stdout + result.stderr).strip()
-        output_parts.append(combined)
         if combined:
             log.info(combined)
         if result.returncode != 0:
             log.error("Command failed (exit %d): %s", result.returncode, " ".join(cmd))
-            break
+            return
 
-    return "\n".join(output_parts)
+    log.info("Update complete")
 
 
 def _extract_str(data: dict[str, Any], key: str, default: str = "") -> str:
@@ -95,10 +94,12 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self._send(200, "ignored")
             return
 
+        # Respond immediately — the update can take tens of seconds and the
+        # webhook caller (DockerHub / Traefik) will close the connection before
+        # it finishes, causing a BrokenPipeError if we write the response last.
+        self._send(202, "update triggered")
         log.info("Tag matched — starting update")
-        output = run_update()
-        log.info("Update complete")
-        self._send(200, output or "done")
+        threading.Thread(target=run_update, daemon=True).start()
 
     def do_GET(self) -> None:
         if self.path == "/healthz":

@@ -50,12 +50,11 @@ body=$(curl -s -X POST "${BASE}${HOOK}" \
   -d '{"push_data":{"tag":"latest"},"repository":{"repo_name":"myorg/myapp"}}')
 [ "${body}" = "ignored" ] && pass "non-matching tag returned 'ignored'" || fail "expected 'ignored', got '${body}'"
 
-echo "==> Test: POST with matching tag → triggers update (docker unavailable in test, exit non-zero is expected)"
+echo "==> Test: POST with matching tag → 202 Accepted (update runs in background)"
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BASE}${HOOK}" \
   -H "Content-Type: application/json" \
   -d '{"push_data":{"tag":"dev"},"repository":{"repo_name":"myorg/myapp"}}')
-# The server always returns 200 regardless of compose exit code — just verify it doesn't crash
-[ "${code}" = "200" ] && pass "matching tag returned HTTP 200" || fail "expected 200, got ${code}"
+[ "${code}" = "202" ] && pass "matching tag returned HTTP 202" || fail "expected 202, got ${code}"
 
 echo "==> Test: POST with invalid JSON → 400"
 code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BASE}${HOOK}" \
